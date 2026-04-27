@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "egrefine"
+version = "0.1.0"
+description = "Execution-grounded schema refinement for Text-to-SQL"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Wang Jiaqian", email = "24151111272@stu.xidian.edu.cn" },
+]
+keywords = ["text-to-sql", "schema-refinement", "llm", "database", "nl2sql", "execution-grounded"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "openai>=1.0",
+    "pyyaml>=6.0",
+    "sqlparse>=0.5",
+    "sentence-transformers>=2.0",
+    "tqdm>=4.65",
+    "rich>=13.0",
+    "requests>=2.28",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+egrefine-refine = "egrefine.cli:refine_main"
+egrefine-eval = "egrefine.cli:eval_main"
+
+[project.urls]
+Homepage = "https://github.com/ai-jiaqian/EGRefine"
+Repository = "https://github.com/ai-jiaqian/EGRefine"
+Issues = "https://github.com/ai-jiaqian/EGRefine/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = [
+    "endpoint: marks tests requiring a live LLM endpoint (deselect with -m 'not endpoint')",
+    "integration: marks integration tests (deselect with -m 'not integration')",
+    "concurrency: marks concurrency tests that hit live endpoints",
+]

@@ -1,0 +1,79 @@
+# EGRefine — OpenAI API example configuration
+#
+# Usage:
+#   1. Set environment variable: export OPENAI_API_KEY="sk-..."
+#   2. Edit the dataset paths below.
+#   3. Run:
+#        egrefine-refine --config config/example_openai.yaml --benchmark bird --dbs formula_1
+#
+# Cost note: a full BIRD-dev refinement on gpt-4o-mini costs ~$2-3.
+
+# ====== LLM endpoints ======
+models:
+  candidate_llm:
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"      # read from env at runtime; never commit a real key
+    model_name: "gpt-4o-mini"
+    temperature: 0.7
+    max_tokens: 512
+    max_retries: 3
+
+  text2sql:
+    - name: "gpt-4o-mini"
+      base_url: "https://api.openai.com/v1"
+      api_key: "${OPENAI_API_KEY}"
+      model_name: "gpt-4o-mini"
+      temperature: 0
+      max_tokens: 1024
+
+  embedding:
+    base_url: "https://api.openai.com/v1"
+    api_key: "${OPENAI_API_KEY}"
+    model_name: "text-embedding-3-small"
+
+# ====== Phase 1: Pruning ======
+phase1:
+  method: "rule"                  # "llm" mode also works on OpenAI but costs more
+  signals:
+    short_name:
+      enabled: true
+      max_length: 3
+    high_similarity:
+      enabled: true
+      threshold: 0.85
+    naming_inconsistency:
+      enabled: true
+    generic_vocabulary:
+      enabled: true
+  skip_primary_keys: true
+
+phase2:
+  k: 3
+  sample_rows: 20
+
+phase3:
+  conservative: true
+  min_delta: 0.05
+  conflict_resolution_rounds: 2
+
+phase4:
+  view_prefix: "refined_"
+  backmapper: "regex"
+
+# ====== Datasets — REPLACE WITH YOUR PATHS ======
+data:
+  bird:
+    path: "/path/to/BIRD/dev_20240627"
+    split: "dev"
+  drspider_abbr:
+    path: "/path/to/dr_spider/DB_schema_abbreviation"
+  drspider_syn:
+    path: "/path/to/dr_spider/DB_schema_synonym"
+
+concurrency:
+  max_workers: 4                  # OpenAI rate limits: keep modest
+
+output:
+  dir: "./results"
+  cache_dir: "./cache"
+  save_intermediate: true
