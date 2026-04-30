@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use EGRefine in your research, please cite the paper below."
+message: "If you use EGRefine in your research, please cite this software."
 title: "EGRefine: Execution-Grounded Schema Refinement for Text-to-SQL"
 authors:
   - family-names: "Wang"
@@ -10,11 +10,3 @@ authors:
 type: software
 license: Apache-2.0
 repository-code: "https://github.com/ai-jiaqian/EGRefine"
-preferred-citation:
-  type: unpublished
-  authors:
-    - family-names: "Wang"
-      given-names: "Jiaqian"
-  title: "EGRefine: Execution-Grounded Schema Refinement for Text-to-SQL"
-  year: 2026
-  notes: "Under review at IEEE Transactions on Knowledge and Data Engineering (TKDE), 2026"

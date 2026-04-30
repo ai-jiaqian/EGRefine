@@ -126,21 +126,6 @@ or Figure, with estimated runtime and expected numbers).
 
 Setup details in [`docs/benchmarks.md`](docs/benchmarks.md).
 
-## Citation
-
-If you use EGRefine in your research, please cite:
-
-```bibtex
-@unpublished{wang2026egrefine,
-  author = {Wang, Jiaqian},
-  title  = {EGRefine: Execution-Grounded Schema Refinement for Text-to-SQL},
-  year   = {2026},
-  note   = {Under review at IEEE Transactions on Knowledge and Data Engineering (TKDE)}
-}
-```
-
-(BibTeX entry will be updated to `@article{...}` upon paper acceptance.)
-
 ## License
 
 Apache License 2.0. See [`LICENSE`](LICENSE).
