@@ -39,9 +39,14 @@ Two ideas distinguish EGRefine from prior schema-refinement work:
 - **Execution feedback** replaces "the LLM thinks this name is better" with
   "the downstream system actually performs better with this name on real
   queries". The downstream model becomes the arbiter.
-- **The conservative rule** guarantees monotonic non-degradation: if no
-  candidate beats the original, the original is kept. EGRefine never makes
-  a schema worse.
+- **The conservative rule** accepts a rename only when it *strictly improves*
+  execution accuracy on the verification workload; otherwise the original name
+  is kept. Each accepted rename is therefore *locally non-degrading* on that
+  workload — for the column it changes, measured against the queries and model
+  used to verify it. This is a per-column property under the verification
+  workload, not a global guarantee: the net effect still depends on the
+  workload and downstream model, and cross-column interactions are not
+  separately verified (see Proposition 1 and its remarks in the paper).
 
 ## Installation
 

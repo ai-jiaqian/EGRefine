@@ -80,9 +80,14 @@ else:
     revert to original name, delta = 0
 ```
 
-This guarantees monotone non-regression: EGRefine never makes things worse on
-the columns it evaluates. Combined with a minimum delta threshold `min_delta`
-(default 0.05), it also filters out noisy marginal improvements.
+This makes each accepted rename locally non-degrading on the verification
+workload: for the column it changes, the rename is kept only if it strictly
+improves ExAcc on the queries and model used to score it. This is a per-column
+property under that workload, not a global guarantee — net effect depends on
+the workload and downstream model, and cross-column interactions are not
+separately verified (Proposition 1 and its remarks). Combined with a minimum
+delta threshold `min_delta` (default 0.05), it also filters out noisy marginal
+improvements.
 
 ### VIEW Equivalence (Theorem 1)
 
