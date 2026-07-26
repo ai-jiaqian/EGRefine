@@ -8,7 +8,7 @@ Schema Refinement**.
 
 - [`../../EGRefine-PVLDB.pdf`](../../EGRefine-PVLDB.pdf): submitted revision
   PDF. SHA-256:
-  `f507afc66dc638190b7ab3626acbf227ba9d90d1c280755e62af4a7c42d1332d`.
+  `f549e6b5baac9ba91ab0fcef9940aedd780f8bdf7163434762dd0c3c6d04321f`.
 - [`confirmed_results.md`](confirmed_results.md): exact values reported in
   Tables 1--21 of the revision.
 - [`../../docs/reproduction.md`](../../docs/reproduction.md): commands and
