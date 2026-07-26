@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import time
+from collections import OrderedDict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -39,6 +40,59 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _load_forced_targets(path: str):
+    """Load an ordered ``db_id -> [table.column, ...]`` target mapping."""
+    with open(path, "r") as f:
+        payload = json.load(f)
+
+    targets = payload.get("targets")
+    if not isinstance(targets, list) or not targets:
+        raise ValueError(f"Forced-target file has no non-empty 'targets' list: {path}")
+
+    by_db = OrderedDict()
+    seen = set()
+    for index, item in enumerate(targets):
+        if not isinstance(item, dict):
+            raise ValueError(f"Forced target #{index} must be an object")
+        db_id = item.get("db_id")
+        full_name = item.get("full_name")
+        if not db_id or not full_name or "." not in full_name:
+            raise ValueError(
+                f"Forced target #{index} requires db_id and "
+                "full_name='table.column'"
+            )
+        key = (db_id, full_name)
+        if key in seen:
+            raise ValueError(f"Duplicate forced target: {db_id}:{full_name}")
+        seen.add(key)
+        by_db.setdefault(db_id, []).append(full_name)
+    return by_db
+
+
+def _resolve_forced_columns(schema, full_names):
+    """Resolve a frozen target list and reject structurally unsafe columns."""
+    by_name = {column.full_name: column for column in schema.all_columns}
+    missing = [name for name in full_names if name not in by_name]
+    if missing:
+        raise ValueError(
+            f"Forced targets missing from schema {schema.db_id}: "
+            + ", ".join(missing)
+        )
+
+    from egrefine.phase1.llm_screener import structural_exclusion
+    skip_set, _, _, _ = structural_exclusion(schema)
+    unsafe = [
+        name for name in full_names
+        if name in skip_set or by_name[name].is_pk
+    ]
+    if unsafe:
+        raise ValueError(
+            f"Forced targets violate structural exclusion in {schema.db_id}: "
+            + ", ".join(unsafe)
+        )
+    return [by_name[name] for name in full_names]
+
+
 def _apply_column_limit(max_columns: int):
     """Monkey-patch pruner (rule + LLM variants) to limit candidate count."""
     from egrefine.phase1.pruner import prune as _original_prune
@@ -57,8 +111,8 @@ def _apply_column_limit(max_columns: int):
             result.candidates = result.candidates[:max_columns]
         return result
 
-    src.pipeline.prune = limited_prune
-    src.pipeline.prune_llm = limited_prune_llm
+    egrefine.pipeline.prune = limited_prune
+    egrefine.pipeline.prune_llm = limited_prune_llm
 
 
 def _save_artifacts(result, schema, output_dir: str):
@@ -107,6 +161,9 @@ def main():
     parser.add_argument("--no-pruning", action="store_true",
                         help="Skip Phase 1 filtering; pass all non-FK non-shared columns "
                              "as candidates (ablation: w/o Phase 1)")
+    parser.add_argument("--force-columns-file", default=None,
+                        help="Bypass Phase 1 and score exactly the pre-registered "
+                             "db_id/full_name targets in this JSON file")
     parser.add_argument("--verify-algorithms", default="c3",
                         choices=["c3", "dinsql", "macsql",
                                  "c3+dinsql", "c3+macsql", "dinsql+macsql"],
@@ -121,9 +178,21 @@ def main():
                              "Text-to-SQL models during Phase 3 scoring. "
                              "Default: off (enterprise-scenario framing). "
                              "For BIRD evidence ablation experiments.")
+    parser.add_argument("--workload-conditioned", action="store_true", default=False,
+                        help="Include up to three questions from Q(c_i) in the "
+                             "Phase 2 prompt; uses a separate candidate cache")
     args = parser.parse_args()
 
+    if args.force_columns_file and args.no_pruning:
+        parser.error("--force-columns-file and --no-pruning are mutually exclusive")
+    if args.force_columns_file and args.method != "egrefine":
+        parser.error("--force-columns-file is supported only for --method egrefine")
+
     config = load_config(args.config)
+    forced_targets = (
+        _load_forced_targets(args.force_columns_file)
+        if args.force_columns_file else None
+    )
 
     # ===== Load benchmark dataset =====
     if args.benchmark == "bird":
@@ -140,7 +209,14 @@ def main():
         loader = DrSpiderLoader(ds_cfg["path"])
     else:
         raise ValueError(f"Unknown benchmark: {args.benchmark}")
-    db_ids = args.dbs or loader.db_ids
+    db_ids = args.dbs or (list(forced_targets) if forced_targets else loader.db_ids)
+    if forced_targets:
+        missing_target_dbs = [db_id for db_id in db_ids if db_id not in forced_targets]
+        if missing_target_dbs:
+            parser.error(
+                "Requested DBs have no frozen targets: "
+                + ", ".join(missing_target_dbs)
+            )
 
     # ===== Apply --no-conservative =====
     if args.no_conservative:
@@ -190,6 +266,16 @@ def main():
     if args.use_evidence:
         cache_dir = cache_dir + "_evidence"
         logger.info("Evidence mode: cache_dir=%s", cache_dir)
+
+    if args.force_columns_file:
+        target_tag = os.path.splitext(os.path.basename(args.force_columns_file))[0]
+        cache_dir = cache_dir + f"_forced_{target_tag}"
+        logger.info("Forced-target mode: cache_dir=%s", cache_dir)
+
+    if args.workload_conditioned:
+        cache_dir = cache_dir + "_wc"
+        config["phase2"]["workload_conditioned"] = True
+        logger.info("Workload-conditioned Phase 2: cache_dir=%s", cache_dir)
 
     # Path for loading database_description CSVs in Phase 2 (BIRD only)
     desc_base_path = None
@@ -288,7 +374,15 @@ def main():
                 )
             else:
                 override_candidates = None
-                if args.no_pruning:
+                if forced_targets:
+                    override_candidates = _resolve_forced_columns(
+                        schema, forced_targets[db_id]
+                    )
+                    logger.info(
+                        "[%s] forced-inclusion: %d pre-registered targets",
+                        db_id, len(override_candidates),
+                    )
+                elif args.no_pruning:
                     # Ablation: skip Phase 1 filtering entirely. Still apply
                     # Structural Exclusion (FK / same-name-same-type) for
                     # correctness — otherwise FK rename without PK driver

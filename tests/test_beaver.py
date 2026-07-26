@@ -28,6 +28,11 @@ requires_mysql = pytest.mark.skipif(
 BEAVER_PATH = os.environ.get("EGREFINE_TEST_BEAVER_PATH", "/path/to/BEAVER")
 MYSQL_CONFIG = {"host": "localhost", "user": "root", "password": "", "port": 3306}
 
+requires_beaver = pytest.mark.skipif(
+    not (_mysql_available() and os.path.isfile(os.path.join(BEAVER_PATH, "dev_nw.json"))),
+    reason="BEAVER NW data or its MySQL databases are not available",
+)
+
 
 class TestDBConnection:
     """Test db_connection module with both SQLite and MySQL."""
@@ -149,7 +154,7 @@ class TestLoadSchemaFromMySQL:
 class TestBEAVERLoader:
     """Test BEAVERLoader class."""
 
-    @requires_mysql
+    @requires_beaver
     def test_load_nw(self):
         from egrefine.data.benchmark import BEAVERLoader
         loader = BEAVERLoader(BEAVER_PATH, split="nw", mysql_config=MYSQL_CONFIG)
@@ -157,14 +162,14 @@ class TestBEAVERLoader:
         assert len(loader.db_ids) == 5
         assert "csail_stata_nova" in loader.db_ids
 
-    @requires_mysql
+    @requires_beaver
     def test_get_db_path_returns_mysql_uri(self):
         from egrefine.data.benchmark import BEAVERLoader
         loader = BEAVERLoader(BEAVER_PATH, split="nw", mysql_config=MYSQL_CONFIG)
         path = loader.get_db_path("csail_stata_nova")
         assert path == "mysql://csail_stata_nova"
 
-    @requires_mysql
+    @requires_beaver
     def test_get_pairs_for_db(self):
         from egrefine.data.benchmark import BEAVERLoader
         loader = BEAVERLoader(BEAVER_PATH, split="nw", mysql_config=MYSQL_CONFIG)
@@ -172,7 +177,7 @@ class TestBEAVERLoader:
         assert len(nova_pairs) > 0
         assert all(p.db_id == "csail_stata_nova" for p in nova_pairs)
 
-    @requires_mysql
+    @requires_beaver
     def test_pairs_have_gold_sql(self):
         from egrefine.data.benchmark import BEAVERLoader
         loader = BEAVERLoader(BEAVER_PATH, split="nw", mysql_config=MYSQL_CONFIG)
@@ -180,7 +185,7 @@ class TestBEAVERLoader:
             assert p.gold_sql.strip()
             assert p.nl.strip()
 
-    @requires_mysql
+    @requires_beaver
     def test_gold_sql_executes(self):
         """Verify at least one gold SQL actually runs against MySQL."""
         from egrefine.data.benchmark import BEAVERLoader

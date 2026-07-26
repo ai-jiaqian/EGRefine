@@ -176,11 +176,21 @@ def run_pipeline(
     # ===== Phase 2: Candidate Generation (parallel) =====
     t0 = time.time()
     k = phase2_config.get("k", 3)
+    workload_conditioned = phase2_config.get("workload_conditioned", False)
+
+    def _questions_for(column):
+        if not workload_conditioned:
+            return None
+        return [pair.nl for pair in query_index.get(column.full_name, [])[:3]] or None
+
     phase2_results: Dict[str, List[CandidateName]] = {}
 
     if max_workers > 1 and len(prune_result.candidates) > 1:
         def _gen(col):
-            return col.full_name, candidate_generator.generate(col, schema, db_path, k=k)
+            return col.full_name, candidate_generator.generate(
+                col, schema, db_path, k=k,
+                sample_questions=_questions_for(col),
+            )
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(_gen, col) for col in prune_result.candidates]
@@ -189,7 +199,10 @@ def run_pipeline(
                 phase2_results[full_name] = candidates
     else:
         for col in prune_result.candidates:
-            candidates = candidate_generator.generate(col, schema, db_path, k=k)
+            candidates = candidate_generator.generate(
+                col, schema, db_path, k=k,
+                sample_questions=_questions_for(col),
+            )
             phase2_results[col.full_name] = candidates
 
     timings["phase2"] = time.time() - t0

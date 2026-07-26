@@ -65,6 +65,7 @@ def build_candidate_prompt(
     k: int = 3,
     column_descriptions: Optional[Dict[str, Dict[str, str]]] = None,
     neighbor_samples: Optional[Dict[str, List[str]]] = None,
+    sample_questions: Optional[List[str]] = None,
 ) -> str:
     """Build the LLM prompt for generating candidate column names.
 
@@ -120,6 +121,16 @@ def build_candidate_prompt(
         f"- {v}" for v in sample_values
     ) or "- (no data available)"
 
+    questions_section = ""
+    if sample_questions:
+        q_lines = "\n".join(f"- {q}" for q in sample_questions[:3])
+        questions_section = (
+            "\n## Sample User Questions Referencing This Column\n"
+            f"{q_lines}\n"
+            "(Prefer names whose vocabulary matches how users actually ask "
+            "about this column.)\n"
+        )
+
     # Target column description
     target_desc = descs.get(f"{column.table}.{column.name}", {})
     target_desc_line = ""
@@ -147,7 +158,7 @@ def build_candidate_prompt(
 
 ## Sample Data Values of Target Column
 {sample_lines}
-
+{questions_section}
 ## Task
 Propose exactly {k} alternative column names. Follow these rules:
 

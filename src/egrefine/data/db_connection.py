@@ -70,7 +70,10 @@ def execute_sql(
             return results
         else:
             import time as _time
-            conn = sqlite3.connect(db_ref)
+            # Evaluation and verification only require SELECT. Read-only mode
+            # prevents hallucinated model-generated DDL from mutating a
+            # benchmark database in place.
+            conn = sqlite3.connect(f"file:{db_ref}?mode=ro", uri=True)
             conn.execute(f"PRAGMA busy_timeout = {timeout * 1000}")
             # Real query execution timeout via progress_handler
             _deadline = _time.monotonic() + timeout
