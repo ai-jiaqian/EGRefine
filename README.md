@@ -6,6 +6,11 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![CI](https://github.com/ai-jiaqian/EGRefine/actions/workflows/ci.yml/badge.svg)](https://github.com/ai-jiaqian/EGRefine/actions)
 
+> **PVLDB revision artifact.** The submitted revision PDF, exact values for
+> Tables 1--21, sanitized experiment configuration, and table-to-script
+> reproduction guide are collected in
+> [`artifacts/pvldb_revision/`](artifacts/pvldb_revision/README.md).
+
 EGRefine is a plug-and-play preprocessor that improves the column/table naming
 quality of database schemas to lift downstream Text-to-SQL accuracy. Unlike
 prior approaches that rely on LLM "semantic understanding" to guess better
@@ -17,8 +22,9 @@ improves.
 
 EGRefine is a four-phase pipeline:
 
-1. **Phase 1 — Pruning.** Identify columns whose names are likely problematic
-   (short names, generic vocabulary, naming inconsistency, high similarity).
+1. **Phase 1 — Screening.** Apply structural exclusions, then use an LLM to
+   identify columns whose names may confuse Text-to-SQL. The earlier heuristic
+   screening mode remains available for ablation.
 2. **Phase 2 — Candidate Generation.** Ask an LLM for `k` alternative names
    per column, given the surrounding schema context and sampled data values.
 3. **Phase 3 — Execution-Grounded Verification.** For each candidate name,
@@ -30,7 +36,9 @@ EGRefine is a four-phase pipeline:
 4. **Phase 4 — VIEW Synthesis + Back-Mapping.** Materialize the accepted
    refinements as SQL VIEWs (the original tables are never modified), and
    provide a back-mapper for translating downstream-generated SQL back to
-   the original schema for execution.
+   the original schema for execution. PK renames propagate only to same-name
+   FKs; role-named FKs keep their local semantics, and within-table name
+   uniqueness is enforced before materialization.
 
 ## Why it works
 
@@ -119,7 +127,9 @@ specification, data structures, and configuration reference.
 
 See [`docs/reproduction.md`](docs/reproduction.md) for the table-by-table
 reproduction guide (which config + which command produces which paper Table
-or Figure, with estimated runtime and expected numbers).
+or analysis). Confirmed reported values contain no placeholders and are also
+available in
+[`artifacts/pvldb_revision/confirmed_results.md`](artifacts/pvldb_revision/confirmed_results.md).
 
 ## Benchmarks supported
 

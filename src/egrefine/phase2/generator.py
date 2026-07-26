@@ -74,6 +74,7 @@ class CandidateGenerator:
         schema: Schema,
         db_path: str,
         k: int = 3,
+        sample_questions: Optional[List[str]] = None,
     ) -> List[CandidateName]:
         """Generate k candidate names for a column.
 
@@ -114,6 +115,7 @@ class CandidateGenerator:
             column, schema, sample_values, k=k,
             column_descriptions=col_descs,
             neighbor_samples=neighbor_samples,
+            sample_questions=sample_questions,
         )
 
         # Call LLM with retry on JSON parse failure

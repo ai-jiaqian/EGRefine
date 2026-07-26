@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 
 BACKING_PREFIX = "_orig_"
 
+# PK->FK propagation mode used by the revised method:
+#   "same_name" (default): propagate only when the FK surface name equals the
+#       referenced PK's original surface name. Role-named FKs retain their
+#       local semantics.
+#   "all" (legacy): unconditional propagation, retained only for the paired
+#       comparison with the originally submitted implementation.
+PROPAGATION_MODE = "same_name"
+
 
 def _build_rename_map(
     results: List[SelectionResult],
@@ -49,6 +57,19 @@ def _build_rename_map(
 
                 for col in table.columns:
                     if col.fk_target and col.fk_target in pk_renames:
+                        if col.full_name in rename_map:
+                            # A column's own execution-verified rename takes
+                            # precedence over propagation.
+                            continue
+                        pk_orig_name = col.fk_target.split(".")[-1]
+                        if (PROPAGATION_MODE == "same_name"
+                                and col.name.lower() != pk_orig_name.lower()):
+                            logger.info(
+                                "PK->FK propagation withheld (role-named FK): "
+                                "%s references %s",
+                                col.full_name, col.fk_target,
+                            )
+                            continue
                         new_name = pk_renames[col.fk_target]
                         # Skip propagation if the new name would collide with
                         # an existing column in the same table (case-insensitive).
@@ -60,8 +81,59 @@ def _build_rename_map(
                             )
                             continue
                         rename_map[col.full_name] = new_name
+                        # Keep the collision set current when multiple FKs in
+                        # one table reference the same renamed PK.
+                        existing_names.add(new_name.lower())
 
+    _resolve_duplicate_names(rename_map, schema)
     return rename_map
+
+
+def _resolve_duplicate_names(rename_map: Dict[str, str],
+                             schema: Optional[Schema]) -> None:
+    """Enforce admissibility as a hard Phase-4 post-condition.
+
+    SQLite may tolerate duplicate VIEW aliases, so synthesis explicitly
+    reverts the later colliding rename to its original surface name.
+    """
+    if not schema:
+        return
+    for table in schema.tables:
+        # Reverting one rename can expose a second collision (for example,
+        # a->c, b->a while c is unchanged), so iterate to a fixed point.
+        while True:
+            groups: Dict[str, List] = {}
+            for column in table.columns:
+                final_name = rename_map.get(column.full_name, column.name).lower()
+                groups.setdefault(final_name, []).append(column)
+
+            duplicate_groups = [group for group in groups.values() if len(group) > 1]
+            if not duplicate_groups:
+                break
+
+            changed = False
+            for group in duplicate_groups:
+                # An unchanged original column has precedence. Otherwise keep
+                # the first accepted rename in schema order and revert later
+                # colliding renames.
+                unchanged = [c for c in group if c.full_name not in rename_map]
+                keeper = unchanged[0] if unchanged else group[0]
+                for column in group:
+                    if column is keeper or column.full_name not in rename_map:
+                        continue
+                    logger.warning(
+                        "Naming collision in table '%s': keeping %s and "
+                        "reverting %s to its original name",
+                        table.name, keeper.full_name, column.full_name,
+                    )
+                    del rename_map[column.full_name]
+                    changed = True
+
+            if not changed:
+                raise ValueError(
+                    f"Schema {schema.db_id}.{table.name} contains duplicate "
+                    "original column names; Phase-4 admissibility cannot be enforced"
+                )
 
 
 # ---------------------------------------------------------------------------
