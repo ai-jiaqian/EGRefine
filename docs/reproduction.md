@@ -2,7 +2,7 @@
 
 This guide describes the supplied runtime and command-line entry points. It
 does not redistribute benchmark data or promise exact agreement across model
-serving stacks. Configure paths and endpoints as described in [README](../README.md).
+serving stacks. Configure paths and endpoints as described in README (`../README.md`).
 
 ## Refine and evaluate
 

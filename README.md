@@ -25,7 +25,7 @@ egrefine-eval --help
 Editable installation from the extracted source directory is supported. No
 Git history or third-party repository checkout is needed. Tests for external
 BIRD/BEAVER data are skipped unless the corresponding data is configured;
-see [benchmark setup](docs/benchmarks.md). Unit and pipeline tests use mocks
+see benchmark setup (`docs/benchmarks.md`). Unit and pipeline tests use mocks
 and temporary SQLite databases, without issuing real model requests.
 
 ## Run
@@ -53,12 +53,12 @@ retains the earlier approximation. `--full-eval` evaluates every query,
 including databases with no accepted changes, and cannot be combined with
 `--reuse-original-dir`.
 
-See [running experiments](docs/reproduction.md), [quickstart](docs/quickstart.md),
-and [architecture](docs/architecture.md). Full experiments require your own
+See running experiments (`docs/reproduction.md`), quickstart (`docs/quickstart.md`),
+and architecture (`docs/architecture.md`). Full experiments require your own
 model endpoint and datasets; unit-test success does not establish reproduction
 of every numerical result in the paper.
 
 ## License
 
-Apache License 2.0; see [LICENSE](LICENSE). Third-party dataset and model
+Apache License 2.0; see LICENSE (`LICENSE`). Third-party dataset and model
 licenses remain applicable to those separately obtained resources.
