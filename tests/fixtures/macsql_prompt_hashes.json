@@ -1,0 +1,21 @@
+{
+  "source": "https://github.com/wbbeyourself/MAC-SQL/blob/31a9df5e0d520be4769be57a4b9022e5e34a14f4/core/const.py",
+  "templates": {
+    "selector_template": {
+      "raw_sha256": "229fd4d6353fecfc7889689a56f806ed878d5476171b11745dea94d6d3484c6e",
+      "rendered_sha256": "613d2cadf716ca9ac8c2f847396c7675b9fb2ef6ba627110722bccf98cb507ca"
+    },
+    "decompose_template_spider": {
+      "raw_sha256": "c5280edcff456769f0d0a44746711053b0b3d38301a776789216c99f37259a7b",
+      "rendered_sha256": "c12dd9efe3cb8c820886f0448e0f27758015a6872519b49a5ad3ddef96b18824"
+    },
+    "decompose_template_bird": {
+      "raw_sha256": "e609e31098b78f5ceecc6b764e51d454e9954775df912a2f038c2ffeed27eb8b",
+      "rendered_sha256": "06c59a871c0510249531ad4d4a43df1031eb95034eb29928ca37a6145fc8b8e4"
+    },
+    "refiner_template": {
+      "raw_sha256": "a44d45a291ac87a8a4f2f130fea244a5a7ba342d47380951d9bbe066f1a72b65",
+      "rendered_sha256": "8fab12bcd805b158d4d686b43f5dc43841ec5a7afb5f5ef1f1069b66ea82a43e"
+    }
+  }
+}

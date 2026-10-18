@@ -121,6 +121,9 @@ def build_candidate_prompt(
         f"- {v}" for v in sample_values
     ) or "- (no data available)"
 
+    # Workload-conditioned section (E6): sample NL questions from the
+    # refinement workload Q(c_i).  Empty string when not enabled so the
+    # standard prompt is byte-identical to the non-conditioned variant.
     questions_section = ""
     if sample_questions:
         q_lines = "\n".join(f"- {q}" for q in sample_questions[:3])

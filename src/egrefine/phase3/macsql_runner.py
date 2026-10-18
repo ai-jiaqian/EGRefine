@@ -1,4 +1,6 @@
-"""MAC-SQL: Multi-Agent Collaborative Framework for Text-to-SQL.
+"""Legacy approximate MAC-SQL runner (algorithm name: macsql_legacy).
+
+Use macsql_official_runner.MACSQLOfficialText2SQL for the macsql algorithm.
 
 Implements Wang et al. 2024 as a Text2SQLModel with three agents:
   Selector  — schema linking, prune irrelevant tables/columns

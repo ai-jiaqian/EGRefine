@@ -72,7 +72,17 @@ class Schema:
         """返回应用 refinement 后的新 Schema（不修改原 Schema）。
 
         mapping: {"table.old_col": "new_col", ...}
+
+        Foreign-key references (``foreign_keys`` and ``fk_target``) are
+        rewritten to the new names; leaving them on the old names made the
+        Phase 3 candidate schema reference columns that no longer exist
+        (2026-10-13 fidelity audit, X4 stale FK).
         """
+        def _rename_ref(full: Optional[str]) -> Optional[str]:
+            if full and full in mapping:
+                return f"{full.split('.', 1)[0]}.{mapping[full]}"
+            return full
+
         new_tables = []
         for table in self.tables:
             new_cols = []
@@ -84,7 +94,7 @@ class Schema:
                         table=col.table,
                         dtype=col.dtype,
                         is_pk=col.is_pk,
-                        fk_target=col.fk_target,
+                        fk_target=_rename_ref(col.fk_target),
                     ))
                 else:
                     new_cols.append(Column(
@@ -92,13 +102,14 @@ class Schema:
                         table=col.table,
                         dtype=col.dtype,
                         is_pk=col.is_pk,
-                        fk_target=col.fk_target,
+                        fk_target=_rename_ref(col.fk_target),
                     ))
             new_tables.append(Table(name=table.name, columns=new_cols))
         return Schema(
             db_id=self.db_id,
             tables=new_tables,
-            foreign_keys=list(self.foreign_keys),
+            foreign_keys=[(_rename_ref(s), _rename_ref(t))
+                          for s, t in self.foreign_keys],
         )
 
 

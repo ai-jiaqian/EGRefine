@@ -27,6 +27,7 @@ from egrefine.phase2.generator import CandidateGenerator
 from egrefine.phase3.c3_runner import C3Text2SQL
 from egrefine.phase3.dinsql_runner import DINSQLText2SQL
 from egrefine.phase3.macsql_runner import MACSQLText2SQL
+from egrefine.phase3.macsql_official_runner import MACSQLOfficialText2SQL
 from egrefine.phase3.text2sql_runner import SimpleLLMText2SQL
 from egrefine.phase4.view_synthesis import generate_refined_tables_json
 from egrefine.pipeline import run_pipeline
@@ -41,7 +42,11 @@ logger = logging.getLogger(__name__)
 
 
 def _load_forced_targets(path: str):
-    """Load an ordered ``db_id -> [table.column, ...]`` target mapping."""
+    """Load an ordered db_id -> [table.column, ...] target mapping.
+
+    The file is intentionally explicit so revision experiments can freeze their
+    target set before seeing new model outputs.
+    """
     with open(path, "r") as f:
         payload = json.load(f)
 
@@ -51,15 +56,14 @@ def _load_forced_targets(path: str):
 
     by_db = OrderedDict()
     seen = set()
-    for index, item in enumerate(targets):
+    for i, item in enumerate(targets):
         if not isinstance(item, dict):
-            raise ValueError(f"Forced target #{index} must be an object")
+            raise ValueError(f"Forced target #{i} must be an object")
         db_id = item.get("db_id")
         full_name = item.get("full_name")
         if not db_id or not full_name or "." not in full_name:
             raise ValueError(
-                f"Forced target #{index} requires db_id and "
-                "full_name='table.column'"
+                f"Forced target #{i} requires db_id and full_name='table.column'"
             )
         key = (db_id, full_name)
         if key in seen:
@@ -69,26 +73,23 @@ def _load_forced_targets(path: str):
     return by_db
 
 
-def _resolve_forced_columns(schema, full_names):
-    """Resolve a frozen target list and reject structurally unsafe columns."""
-    by_name = {column.full_name: column for column in schema.all_columns}
+def _resolve_forced_columns(schema, full_names, allow_primary_keys=False):
+    """Resolve and validate a frozen list of target columns for one schema."""
+    by_name = {c.full_name: c for c in schema.all_columns}
     missing = [name for name in full_names if name not in by_name]
     if missing:
         raise ValueError(
-            f"Forced targets missing from schema {schema.db_id}: "
-            + ", ".join(missing)
+            f"Forced targets missing from schema {schema.db_id}: {', '.join(missing)}"
         )
 
     from egrefine.phase1.llm_screener import structural_exclusion
     skip_set, _, _, _ = structural_exclusion(schema)
-    unsafe = [
-        name for name in full_names
-        if name in skip_set or by_name[name].is_pk
-    ]
+    unsafe = [name for name in full_names
+              if name in skip_set or (by_name[name].is_pk and not allow_primary_keys)]
     if unsafe:
         raise ValueError(
             f"Forced targets violate structural exclusion in {schema.db_id}: "
-            + ", ".join(unsafe)
+            f"{', '.join(unsafe)}"
         )
     return [by_name[name] for name in full_names]
 
@@ -111,8 +112,8 @@ def _apply_column_limit(max_columns: int):
             result.candidates = result.candidates[:max_columns]
         return result
 
-    egrefine.pipeline.prune = limited_prune
-    egrefine.pipeline.prune_llm = limited_prune_llm
+    src.pipeline.prune = limited_prune
+    src.pipeline.prune_llm = limited_prune_llm
 
 
 def _save_artifacts(result, schema, output_dir: str):
@@ -162,11 +163,14 @@ def main():
                         help="Skip Phase 1 filtering; pass all non-FK non-shared columns "
                              "as candidates (ablation: w/o Phase 1)")
     parser.add_argument("--force-columns-file", default=None,
-                        help="Bypass Phase 1 and score exactly the pre-registered "
-                             "db_id/full_name targets in this JSON file")
+                        help="Revision experiment: bypass Phase 1 and score exactly the "
+                             "pre-registered db_id/full_name targets in this JSON file")
+    parser.add_argument("--allow-primary-keys", action="store_true",
+                        help="Allow PKs in forced targets when replaying a frozen main-arm target set")
     parser.add_argument("--verify-algorithms", default="c3",
-                        choices=["c3", "dinsql", "macsql",
-                                 "c3+dinsql", "c3+macsql", "dinsql+macsql"],
+                        choices=["c3", "dinsql", "macsql", "macsql_legacy",
+                                 "c3+dinsql", "c3+macsql", "dinsql+macsql",
+                                 "c3+macsql_legacy", "dinsql+macsql_legacy"],
                         help="Phase 3 verification algorithm(s) (default: c3). "
                              "Use '+' to combine algorithms for joint scoring.")
     parser.add_argument("--max-columns", type=int, default=None,
@@ -179,12 +183,15 @@ def main():
                              "Default: off (enterprise-scenario framing). "
                              "For BIRD evidence ablation experiments.")
     parser.add_argument("--workload-conditioned", action="store_true", default=False,
-                        help="Include up to three questions from Q(c_i) in the "
-                             "Phase 2 prompt; uses a separate candidate cache")
+                        help="E6: include 2-3 sample NL questions from Q(c_i) "
+                             "(refinement workload only) in the Phase 2 candidate "
+                             "prompt. Uses a separate '_wc' Phase 2 cache.")
     args = parser.parse_args()
 
     if args.force_columns_file and args.no_pruning:
         parser.error("--force-columns-file and --no-pruning are mutually exclusive")
+    if args.allow_primary_keys and not args.force_columns_file:
+        parser.error("--allow-primary-keys requires --force-columns-file")
     if args.force_columns_file and args.method != "egrefine":
         parser.error("--force-columns-file is supported only for --method egrefine")
 
@@ -211,11 +218,10 @@ def main():
         raise ValueError(f"Unknown benchmark: {args.benchmark}")
     db_ids = args.dbs or (list(forced_targets) if forced_targets else loader.db_ids)
     if forced_targets:
-        missing_target_dbs = [db_id for db_id in db_ids if db_id not in forced_targets]
+        missing_target_dbs = [db for db in db_ids if db not in forced_targets]
         if missing_target_dbs:
             parser.error(
-                "Requested DBs have no frozen targets: "
-                + ", ".join(missing_target_dbs)
+                "Requested DBs have no frozen targets: " + ", ".join(missing_target_dbs)
             )
 
     # ===== Apply --no-conservative =====
@@ -272,10 +278,12 @@ def main():
         cache_dir = cache_dir + f"_forced_{target_tag}"
         logger.info("Forced-target mode: cache_dir=%s", cache_dir)
 
+    # E6 workload-conditioned Phase 2: prompt includes Q(c_i) questions, so
+    # candidates must not be shared with the standard Phase 2 cache.
     if args.workload_conditioned:
         cache_dir = cache_dir + "_wc"
         config["phase2"]["workload_conditioned"] = True
-        logger.info("Workload-conditioned Phase 2: cache_dir=%s", cache_dir)
+        logger.info("Workload-conditioned Phase 2 (E6): cache_dir=%s", cache_dir)
 
     # Path for loading database_description CSVs in Phase 2 (BIRD only)
     desc_base_path = None
@@ -300,6 +308,11 @@ def main():
     if args.benchmark == "bird":
         desc_dir = os.path.join(config["data"]["bird"]["path"], "dev_databases")
 
+    mac_tables_json = None
+    if args.benchmark in ("drspider_abbr", "drspider_syn"):
+        metadata_path = os.path.join(config["data"][args.benchmark]["path"], "tables_post_perturbation.json")
+        if os.path.isfile(metadata_path):
+            mac_tables_json = metadata_path
     verify_algos = args.verify_algorithms.split("+")
     models = []
     for algo in verify_algos:
@@ -313,6 +326,9 @@ def main():
                 models.append(DINSQLText2SQL(tc, self_correction=True))
         elif algo == "macsql":
             # MAC-SQL: one instance per text2sql config
+            for tc in text2sql_configs:
+                models.append(MACSQLOfficialText2SQL(tc, dataset_name="bird" if args.benchmark == "bird" else "spider", desc_dir=desc_dir, tables_json=mac_tables_json))
+        elif algo == "macsql_legacy":
             for tc in text2sql_configs:
                 models.append(MACSQLText2SQL(tc))
         else:
@@ -376,7 +392,7 @@ def main():
                 override_candidates = None
                 if forced_targets:
                     override_candidates = _resolve_forced_columns(
-                        schema, forced_targets[db_id]
+                        schema, forced_targets[db_id], allow_primary_keys=args.allow_primary_keys
                     )
                     logger.info(
                         "[%s] forced-inclusion: %d pre-registered targets",
@@ -391,10 +407,10 @@ def main():
                     skip_set, _, _, _ = structural_exclusion(schema)
                     override_candidates = [
                         c for c in schema.all_columns
-                        if c.full_name not in skip_set and not c.is_pk
+                        if c.full_name not in skip_set
                     ]
                     logger.info(
-                        "[%s] --no-pruning: %d candidates (all non-PK non-FK)",
+                        "[%s] --no-pruning: %d candidates (all structurally eligible columns)",
                         db_id, len(override_candidates),
                     )
                 result = run_pipeline(

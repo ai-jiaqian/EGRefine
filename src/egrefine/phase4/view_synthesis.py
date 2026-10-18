@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 
 BACKING_PREFIX = "_orig_"
 
-# PK->FK propagation mode used by the revised method:
-#   "same_name" (default): propagate only when the FK surface name equals the
-#       referenced PK's original surface name. Role-named FKs retain their
-#       local semantics.
-#   "all" (legacy): unconditional propagation, retained only for the paired
-#       comparison with the originally submitted implementation.
+# PK→FK propagation mode (VLDB revision, R5-3 / Item 8):
+#   "same_name" (default): a refined PK name propagates only to FKs whose
+#       surface name equals the PK's ORIGINAL name (case-insensitive) — they
+#       share the same ambiguity, so they share the same fix.  Role-named FKs
+#       (e.g. statement_account referencing account_id) keep their deliberate
+#       local semantics untouched.
+#   "all" (legacy): unconditional propagation, as in the submitted paper.
+#       Kept only to reproduce the as-submitted artifacts for paired A/B evals.
 PROPAGATION_MODE = "same_name"
 
 
@@ -58,14 +60,18 @@ def _build_rename_map(
                 for col in table.columns:
                     if col.fk_target and col.fk_target in pk_renames:
                         if col.full_name in rename_map:
-                            # A column's own execution-verified rename takes
-                            # precedence over propagation.
+                            # The column already has its own (verified) direct
+                            # rename — propagation must never overwrite it.
+                            # (Legacy rule silently clobbered these, e.g.
+                            # world_1_4 countrylanguage.cntry_code.)
                             continue
                         pk_orig_name = col.fk_target.split(".")[-1]
                         if (PROPAGATION_MODE == "same_name"
                                 and col.name.lower() != pk_orig_name.lower()):
+                            # Role-named FK: its surface name intentionally
+                            # differs from the referenced PK — preserve it.
                             logger.info(
-                                "PK->FK propagation withheld (role-named FK): "
+                                "PK→FK propagation withheld (role-named FK): "
                                 "%s references %s",
                                 col.full_name, col.fk_target,
                             )
@@ -81,8 +87,10 @@ def _build_rename_map(
                             )
                             continue
                         rename_map[col.full_name] = new_name
-                        # Keep the collision set current when multiple FKs in
-                        # one table reference the same renamed PK.
+                        # Keep the collision set current: without this, two FKs
+                        # referencing the same renamed PK both pass the check
+                        # and end up with duplicate names in one table (bug
+                        # found in the 9B flight_2 runs, 2026-07-16 audit).
                         existing_names.add(new_name.lower())
 
     _resolve_duplicate_names(rename_map, schema)
