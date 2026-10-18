@@ -1,0 +1,99 @@
+# EGRefine — Local vLLM example configuration
+#
+# Usage:
+#   1. Start a vLLM server:
+#        vllm serve Qwen/Qwen2.5-Coder-32B-Instruct --port 8000 --gpu-memory-utilization 0.92
+#   2. Edit the dataset paths below to point at your BIRD/Dr.Spider/BEAVER downloads.
+#   3. Run:
+#        egrefine-refine --config config/example_local_vllm.yaml --benchmark bird --dbs formula_1
+
+# ====== LLM endpoints (all OpenAI-compatible) ======
+models:
+  candidate_llm:
+    base_url: "http://localhost:8000/v1"   # vLLM default port
+    api_key: "dummy"                        # vLLM ignores this; any non-empty string works
+    model_name: "Qwen2.5-Coder-32B-Instruct"
+    temperature: 0.7
+    max_tokens: 512
+    max_retries: 3
+
+  text2sql:
+    - name: "Qwen2.5-Coder-32B"
+      base_url: "http://localhost:8000/v1"
+      api_key: "dummy"
+      model_name: "Qwen2.5-Coder-32B-Instruct"
+      temperature: 0
+      max_tokens: 1024
+
+  embedding:
+    base_url: "http://localhost:8000/v1"
+    api_key: "dummy"
+    model_name: "Qwen2.5-Coder-32B-Instruct"   # only used if Phase 1 method=rule with similarity signal
+
+# ====== Phase 1: Pruning ======
+phase1:
+  method: "llm"                  # "rule" (S1-S4 heuristics) or "llm" (Structural Exclusion + LLM YES/NO)
+  model:
+    base_url: "http://localhost:8000/v1"
+    api_key: "dummy"
+    model_name: "Qwen2.5-Coder-32B-Instruct"
+    temperature: 0
+    max_tokens: 8
+    max_retries: 2
+  concurrency: 32
+  signals:                        # used when method="rule"
+    short_name:
+      enabled: true
+      max_length: 3
+    high_similarity:
+      enabled: true
+      threshold: 0.85
+    naming_inconsistency:
+      enabled: true
+    generic_vocabulary:
+      enabled: true
+  skip_primary_keys: true
+
+# ====== Phase 2: Candidate generation ======
+phase2:
+  k: 3                            # candidates per column
+  sample_rows: 20                 # data rows to show the LLM
+
+# ====== Phase 3: Verification ======
+phase3:
+  conservative: true              # only accept rename when ExAcc strictly improves
+  min_delta: 0.05                 # minimum ExAcc gain to accept (paper default)
+  conflict_resolution_rounds: 2
+
+# ====== Phase 4: VIEW synthesis ======
+phase4:
+  view_prefix: "refined_"
+  backmapper: "regex"             # "regex" (word-boundary aware) or "simple" (string replace)
+
+# ====== Datasets — REPLACE WITH YOUR PATHS ======
+data:
+  bird:
+    path: "/path/to/BIRD/dev_20240627"
+    split: "dev"
+  drspider_abbr:
+    path: "/path/to/dr_spider/DB_schema_abbreviation"
+  drspider_syn:
+    path: "/path/to/dr_spider/DB_schema_synonym"
+  beaver:
+    path: "/path/to/BEAVER"
+    split: "nw"
+    mysql:
+      host: "localhost"
+      user: "root"
+      password: ""
+      port: 3306
+
+# ====== Concurrency ======
+concurrency:
+  max_workers: 8
+
+# ====== Output ======
+output:
+  dir: "./results"
+  cache_dir: "./cache"
+  save_intermediate: true

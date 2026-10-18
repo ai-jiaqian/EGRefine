@@ -1,0 +1,79 @@
+# Example configuration for execution-grounded schema refinement.
+# Replace only endpoint/model identifiers and local dataset paths. No private
+# server address or credential is required by the artifact.
+
+models:
+  candidate_llm:
+    base_url: "http://localhost:8000/v1"
+    api_key: "EMPTY"
+    model_name: "Qwen3.5-27B-FP8"
+    temperature: 0.7
+    max_tokens: 512
+    max_retries: 3
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+
+  text2sql:
+    - name: "Qwen3.5-27B-FP8"
+      base_url: "http://localhost:8000/v1"
+      api_key: "EMPTY"
+      model_name: "Qwen3.5-27B-FP8"
+      temperature: 0
+      max_tokens: 1024
+      extra_body:
+        chat_template_kwargs:
+          enable_thinking: false
+
+phase1:
+  method: "llm"
+  model:
+    base_url: "http://localhost:8000/v1"
+    api_key: "EMPTY"
+    model_name: "Qwen3.5-27B-FP8"
+    temperature: 0
+    max_tokens: 8
+    max_retries: 2
+    extra_body:
+      chat_template_kwargs:
+        enable_thinking: false
+  concurrency: 48
+  skip_primary_keys: true
+
+phase2:
+  k: 3
+  sample_rows: 20
+
+phase3:
+  conservative: true
+  min_delta: 0.05
+  conflict_resolution_rounds: 2
+
+phase4:
+  view_prefix: "refined_"
+  backmapper: "regex"
+
+data:
+  bird:
+    path: "/path/to/BIRD/dev_20240627"
+    split: "dev"
+  drspider_abbr:
+    path: "/path/to/dr_spider/DB_schema_abbreviation"
+  drspider_syn:
+    path: "/path/to/dr_spider/DB_schema_synonym"
+  beaver:
+    path: "/path/to/BEAVER"
+    split: "nw"
+    mysql:
+      host: "localhost"
+      user: "root"
+      password: ""
+      port: 3306
+
+concurrency:
+  max_workers: 48
+
+output:
+  dir: "./results"
+  cache_dir: "./cache_revision_qwen35_27b"
+  save_intermediate: true

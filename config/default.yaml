@@ -1,0 +1,92 @@
+# EGRefine default configuration
+
+# ====== Model endpoints (unified OpenAI-compatible interface) ======
+models:
+  # LLM used by Phase 2 (candidate generation)
+  candidate_llm:
+    base_url: "http://localhost:8000/v1"
+    api_key: "your-api-key"
+    model_name: "your-model-name"
+    temperature: 0.7
+    max_tokens: 512
+    max_retries: 3
+
+  # Text-to-SQL models used by Phase 3 (multiple supported for multi-model verification)
+  text2sql:
+    - name: "model_A"
+      base_url: "http://localhost:8000/v1"
+      api_key: "your-api-key"
+      model_name: "your-model-name"
+      temperature: 0
+      max_tokens: 1024
+
+  # Embedding model used by Phase 1 (only when method="rule" with the high_similarity signal)
+  embedding:
+    base_url: "http://localhost:8000/v1"
+    api_key: "your-api-key"
+    model_name: "your-embedding-model"
+    # To use local sentence-transformers instead of an API endpoint:
+    # type: "local"
+    # local_model: "all-MiniLM-L6-v2"
+
+# ====== Phase configuration ======
+phase1:
+  method: "rule"  # "rule" (S1-S4 heuristics) or "llm" (shared LLM endpoint, YES/NO classification)
+  # LLM-mode configuration (only used when method="llm"; typically shares the Phase 2-3 endpoint)
+  # model:
+  #   base_url: "http://localhost:8000/v1"
+  #   api_key: "dummy"
+  #   model_name: "your-model-name"
+  #   temperature: 0
+  #   max_tokens: 8
+  #   max_retries: 2
+  # concurrency: 48
+  signals:
+    short_name:
+      enabled: true
+      max_length: 3
+    high_similarity:
+      enabled: true
+      threshold: 0.85
+    naming_inconsistency:
+      enabled: true
+    generic_vocabulary:
+      enabled: true
+  skip_primary_keys: true
+
+phase2:
+  k: 3
+  sample_rows: 20
+
+phase3:
+  conservative: true
+  min_delta: 0.05            # Minimum ExAcc improvement required to accept a rename
+  conflict_resolution_rounds: 2
+
+phase4:
+  view_prefix: "refined_"
+  backmapper: "regex"
+
+# ====== Dataset paths ======
+data:
+  bird:
+    path: "/path/to/BIRD"
+    split: "dev"
+  beaver:
+    path: "/path/to/BEAVER"
+    split: "nw"  # "nw", "dw", or "all"
+    mysql:
+      host: "localhost"
+      user: "root"
+      password: ""
+      port: 3306
+
+# ====== Concurrency ======
+concurrency:
+  max_workers: 8   # Number of concurrent LLM API calls (tune for rate limits)
+
+# ====== Output ======
+output:
+  dir: "./results"
+  cache_dir: "./cache"
+  save_intermediate: true

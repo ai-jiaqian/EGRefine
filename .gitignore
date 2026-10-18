@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+.tox/
+
+# Project artifacts (large, machine-specific)
+cache/
+cache_*/
+results/
+logs/
+tmp/
+
+# User-specific configs (port/host bound)
+*.local.yaml
+config/local.yaml
+config/local_*.yaml
+
+# Datasets — users provide their own. Root-anchored so src/egrefine/data/ (core package) is not matched.
+/data/
+
+# SQLite / DB binaries
+*.sqlite
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Secrets
+.env
+.envrc
+
+# Build
+build/
+dist/
+*.whl
