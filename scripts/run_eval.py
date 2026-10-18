@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional, Set
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from egrefine.config import load_config
+from egrefine.detail_logger import DetailLogger
 from egrefine.data.benchmark import BIRDLoader, DrSpiderLoader
 from egrefine.eval.db_setup import copy_database, apply_views
 from egrefine.eval.evaluator import (
@@ -45,6 +46,7 @@ from egrefine.eval.evaluator import (
 from egrefine.phase3.c3_runner import C3Text2SQL
 from egrefine.phase3.dinsql_runner import DINSQLText2SQL
 from egrefine.phase3.macsql_runner import MACSQLText2SQL
+from egrefine.phase3.macsql_official_runner import MACSQLOfficialText2SQL
 from egrefine.phase3.text2sql_runner import SimpleLLMText2SQL
 
 logging.basicConfig(
@@ -61,7 +63,8 @@ METHOD_REGISTRY: Dict[str, type] = {
     "simple": SimpleLLMText2SQL,
     "c3": C3Text2SQL,
     "dinsql": DINSQLText2SQL,
-    "macsql": MACSQLText2SQL,
+    "macsql": MACSQLOfficialText2SQL,
+    "macsql_legacy": MACSQLText2SQL,
 }
 
 
@@ -210,6 +213,8 @@ def main():
     parser.add_argument("--reuse-original-dir", default=None,
                         help="Path to T2 per_db results to reuse for unaffected queries "
                              "(e.g. results/eval/bird/main/per_db)")
+    parser.add_argument("--full-eval", action="store_true",
+                        help="Evaluate every query, including zero-change DBs; disallows reuse.")
     parser.add_argument("--output", default="results/eval",
                         help="Output directory for results")
     parser.add_argument("--use-evidence", action="store_true", default=False,
@@ -221,12 +226,13 @@ def main():
                         help="Path to column_descriptions.json produced by "
                              "scripts/desc_baseline/generate_descriptions.py. "
                              "When set, descriptions are injected inline as "
-                             "SQL comments into the C3 schema serializers "
-                             "(other methods ignore this flag). For refined "
+                             "SQL comments into the C3 and DIN schema serializers. For refined "
                              "evaluation, description keys are automatically "
                              "remapped from original to refined column names "
                              "using the refine-dir's refined_tables.json.")
     args = parser.parse_args()
+    if args.full_eval and args.reuse_original_dir:
+        parser.error("--full-eval cannot be combined with --reuse-original-dir")
 
     # Validate: refined mode requires refine-dir
     eval_original = args.schema in ("original", "both")
@@ -314,11 +320,22 @@ def main():
         else:
             logger.info("Loaded %d column descriptions for inline injection", len(raw_descs))
 
+    mac_tables_json = None
+    if args.benchmark.startswith("drspider_"):
+        dataset_path = Path(config["data"][args.benchmark.replace("_pre", "")]["path"])
+        metadata_path = (dataset_path.parent / "Spider-dev" / "tables.json" if args.benchmark.endswith("_pre")
+                         else dataset_path / "tables_post_perturbation.json")
+        if metadata_path.is_file():
+            mac_tables_json = str(metadata_path)
     models: Dict[str, Any] = {}
     for method_name in args.methods:
         cls = METHOD_REGISTRY[method_name]
-        if method_name == "c3" and column_descriptions is not None:
+        if method_name in ("c3", "dinsql", "simple") and column_descriptions is not None:
             models[method_name] = cls(model_config, column_descriptions=column_descriptions)
+        elif method_name == "macsql":
+            models[method_name] = cls(model_config, dataset_name="bird" if args.benchmark == "bird" else "spider",
+                                     detail_logger=DetailLogger(args.output), tables_json=mac_tables_json,
+                                     column_descriptions=column_descriptions)
         else:
             models[method_name] = cls(model_config)
 
@@ -378,7 +395,7 @@ def main():
                 # Compute refined columns once per DB (used for skip check + per-method reuse)
                 refined_cols_for_db = _get_refined_original_columns(refine_db_dir)
                 # Only skip DB setup in refined-only mode; --schema both still needs it
-                skip_db_setup = not refined_cols_for_db and not eval_original
+                skip_db_setup = not refined_cols_for_db and not eval_original and not args.full_eval
 
                 if not skip_db_setup:
                     refined_schema = load_refined_schema(refined_tables_path)
@@ -448,7 +465,7 @@ def main():
                         )
                         logger.info("[%s] db=%s  no refined cols → reuse NoRef (exacc=%.3f, n=%d)",
                                     method_name, db_id, orig_exacc, n_total)
-                    elif not refined_cols and not orig_data:
+                    elif not refined_cols and not orig_data and not args.full_eval:
                         # No columns refined and no NoRef results to reuse → skip
                         logger.info("[%s] db=%s  no refined cols, skipping (use --reuse-original-dir to include)",
                                     method_name, db_id)

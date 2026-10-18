@@ -59,9 +59,18 @@ class Text2SQLModel(ABC):
 class SimpleLLMText2SQL(Text2SQLModel):
     """Text-to-SQL: 把 schema + 样本数据 + question 发给 LLM。"""
 
-    def __init__(self, config: dict, sample_rows: int = 3):
+    def __init__(
+        self,
+        config: dict,
+        sample_rows: int = 3,
+        column_descriptions: Optional[dict] = None,
+    ):
         self.llm = LLMClient(config)
         self.sample_rows = sample_rows
+        # Optional {(db_id, table, column): description} for the
+        # description-baseline arms; injected as inline ``-- comment``s in the
+        # DDL (same format as C3/DIN). None/empty leaves the prompt unchanged.
+        self.column_descriptions = column_descriptions or {}
 
     def generate(
         self,
@@ -71,6 +80,9 @@ class SimpleLLMText2SQL(Text2SQLModel):
         column_mapping: Optional[dict] = None,
         evidence: str = "",
     ) -> str:
+        # RAW-log context so per-query calls can be attributed (db, question).
+        self.llm.log_context.record = {"db_id": schema.db_id, "nl": nl,
+                                       "method": "simple", "stage": "generation"}
         schema_str = self._format_schema(schema)
 
         # 采样数据辅助理解 schema
@@ -104,22 +116,32 @@ class SimpleLLMText2SQL(Text2SQLModel):
             fk_by_table.setdefault(src_table, []).append((src_col, tgt_table, tgt_col))
 
         for table in schema.tables:
-            col_defs = []
+            entries = []
             for col in table.columns:
                 col_def = f"  {col.name} {col.dtype}"
                 if col.is_pk:
                     col_def += " PRIMARY KEY"
-                col_defs.append(col_def)
+                desc = self.column_descriptions.get((schema.db_id, table.name, col.name))
+                entries.append((col_def, desc))
 
             # 添加 FK 约束
             for src_col, tgt_table, tgt_col in fk_by_table.get(table.name, []):
-                col_defs.append(
-                    f"  FOREIGN KEY ({src_col}) REFERENCES {tgt_table}({tgt_col})"
-                )
+                entries.append((
+                    f"  FOREIGN KEY ({src_col}) REFERENCES {tgt_table}({tgt_col})",
+                    None,
+                ))
+
+            # Comma goes BEFORE the inline comment so it is not swallowed by
+            # SQL's end-of-line comment syntax. Without descriptions this is
+            # byte-identical to the previous ",\n".join(...) output.
+            lines = []
+            for i, (def_, desc) in enumerate(entries):
+                sep = "," if i < len(entries) - 1 else ""
+                lines.append(f"{def_}{sep}  -- {desc}" if desc else f"{def_}{sep}")
 
             parts.append(
                 f"CREATE TABLE {table.name} (\n"
-                + ",\n".join(col_defs)
+                + "\n".join(lines)
                 + "\n);"
             )
 
@@ -134,6 +156,8 @@ class SimpleLLMText2SQL(Text2SQLModel):
         按原始列名采样，但在 prompt 中展示新列名。
         """
         reverse = column_mapping or {}
+        if not str(db_path).startswith("mysql://"):
+            return self._format_sample_rows(schema, db_path, reverse)
         parts = []
         for table in schema.tables:
             col_names = [c.name for c in table.columns]
@@ -161,6 +185,65 @@ class SimpleLLMText2SQL(Text2SQLModel):
                 f"/* {table.name} */\n{header}\n{separator}\n"
                 + "\n".join(row_lines)
             )
+        return "\n\n".join(parts)
+
+    def _format_sample_rows(
+        self, schema: Schema, db_path: str, reverse: dict,
+    ) -> str:
+        """SQLite: show the first ``sample_rows`` REAL rows of each table.
+
+        The per-column path above samples DISTINCT values of each column
+        independently, so a printed "row" mixes values from different records
+        (e.g. ``BUL | Eskimo``). Here every printed row is one actual record,
+        as in the standard "CREATE TABLE + 3 rows" zero-shot prompt.
+        Columns are selected by their database-side name (refined name if the
+        object exposes it, else the mapped original name) and printed under
+        the schema-facing name.
+        """
+        import sqlite3
+        max_len = 100
+        parts = []
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            for table in schema.tables:
+                try:
+                    existing = {r[1] for r in conn.execute(f'PRAGMA table_info("{table.name}")')}
+                except sqlite3.Error:
+                    continue
+                cols, exprs = [], []
+                for c in table.columns:
+                    db_name = c.name if c.name in existing else reverse.get(c.name, c.name)
+                    if db_name not in existing:
+                        continue
+                    cols.append(c.name)
+                    exprs.append('"' + db_name.replace('"', '""') + '"')
+                if not cols:
+                    continue
+                try:
+                    rows = conn.execute(
+                        f'SELECT {", ".join(exprs)} FROM "{table.name}" LIMIT {int(self.sample_rows)}'
+                    ).fetchall()
+                except sqlite3.Error as e:
+                    logger.warning("Sample rows failed for %s: %s", table.name, e)
+                    continue
+                if not rows:
+                    continue
+
+                def fmt(v):
+                    if v is None:
+                        return "NULL"
+                    s = v.decode("utf-8", "replace") if isinstance(v, bytes) else str(v)
+                    s = s.replace("\r", " ").replace("\n", " ")
+                    return s[:max_len]
+
+                header = " | ".join(cols)
+                separator = "-+-".join("-" * max(len(c), 8) for c in cols)
+                row_lines = [" | ".join(fmt(v) for v in r) for r in rows]
+                parts.append(
+                    f"/* {table.name} */\n{header}\n{separator}\n" + "\n".join(row_lines)
+                )
+        finally:
+            conn.close()
         return "\n\n".join(parts)
 
     @staticmethod

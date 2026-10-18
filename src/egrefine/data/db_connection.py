@@ -70,9 +70,10 @@ def execute_sql(
             return results
         else:
             import time as _time
-            # Evaluation and verification only require SELECT. Read-only mode
-            # prevents hallucinated model-generated DDL from mutating a
-            # benchmark database in place.
+            # Read-only connection: evaluation/verification only ever needs
+            # SELECT.  A writable connection lets hallucinated DDL in model
+            # SQL mutate the benchmark database in place (2026-07-16 audit:
+            # 42 ghost tables accumulated across 26 source DBs this way).
             conn = sqlite3.connect(f"file:{db_ref}?mode=ro", uri=True)
             conn.execute(f"PRAGMA busy_timeout = {timeout * 1000}")
             # Real query execution timeout via progress_handler

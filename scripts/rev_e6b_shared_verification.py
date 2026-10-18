@@ -38,7 +38,8 @@ from egrefine.phase2.prompts import CandidateName  # noqa: E402
 from egrefine.phase3.c3_runner import C3Text2SQL  # noqa: E402
 from egrefine.phase3.conflict import resolve_conflicts  # noqa: E402
 from egrefine.phase3.dinsql_runner import DINSQLText2SQL  # noqa: E402
-from egrefine.phase3.macsql_runner import MACSQLText2SQL  # noqa: E402
+from egrefine.phase3.macsql_runner import MACSQLText2SQL
+from egrefine.phase3.macsql_official_runner import MACSQLOfficialText2SQL  # noqa: E402
 from egrefine.phase3.scorer import SelectionResult, score_all_candidates, select_best  # noqa: E402
 from egrefine.phase4.view_synthesis import synthesize  # noqa: E402
 from egrefine.pipeline import PipelineResult  # noqa: E402
@@ -192,6 +193,11 @@ def _build_models(
             config["data"]["bird"]["path"], "dev_databases"
         )
 
+    mac_tables_json = None
+    if benchmark in ("drspider_abbr", "drspider_syn"):
+        metadata_path = os.path.join(config["data"][benchmark]["path"], "tables_post_perturbation.json")
+        if os.path.isfile(metadata_path):
+            mac_tables_json = metadata_path
     models: List[object] = []
     for algorithm in verify_algorithms.split("+"):
         for model_config in text2sql_configs:
@@ -207,6 +213,8 @@ def _build_models(
             elif algorithm == "dinsql":
                 models.append(DINSQLText2SQL(model_config, self_correction=True))
             elif algorithm == "macsql":
+                models.append(MACSQLOfficialText2SQL(model_config, dataset_name="bird" if benchmark == "bird" else "spider", desc_dir=desc_dir, tables_json=mac_tables_json))
+            elif algorithm == "macsql_legacy":
                 models.append(MACSQLText2SQL(model_config))
             else:
                 raise ValueError(f"Unknown verification algorithm: {algorithm}")
@@ -328,8 +336,8 @@ def main() -> None:
         "--verify-algorithms",
         default="c3+dinsql",
         choices=[
-            "c3", "dinsql", "macsql", "c3+dinsql", "c3+macsql",
-            "dinsql+macsql",
+            "c3", "dinsql", "macsql", "macsql_legacy", "c3+dinsql", "c3+macsql",
+            "dinsql+macsql", "c3+macsql_legacy", "dinsql+macsql_legacy",
         ],
     )
     parser.add_argument("--use-evidence", action="store_true")

@@ -38,6 +38,7 @@ class DINSQLText2SQL(Text2SQLModel):
         self,
         config: dict,
         self_correction: bool = True,
+        column_descriptions: Optional[dict] = None,
     ):
         """
         Args:
@@ -46,6 +47,7 @@ class DINSQLText2SQL(Text2SQLModel):
         """
         self.llm = LLMClient(config)
         self.self_correction = self_correction
+        self.column_descriptions = column_descriptions or {}
 
     def generate(
         self,
@@ -68,16 +70,21 @@ class DINSQLText2SQL(Text2SQLModel):
         hint = evidence
 
         # Module 1: Schema Linking (with CoT)
+        self.llm.log_context.record = {"db_id": schema.db_id, "nl": nl,
+                                       "method": "dinsql", "stage": "schema_linking"}
         linking_result = self._schema_linking(nl, schema_ddl, hint)
 
         # Module 2: Classification
+        self.llm.log_context.record["stage"] = "classification"
         difficulty = self._classify(nl, linking_result, hint)
 
         # Module 3: SQL Generation (difficulty-specific)
+        self.llm.log_context.record["stage"] = "generation"
         sql = self._generate_sql(nl, schema_ddl, linking_result, difficulty, hint)
 
         # Module 4: Self-Correction
         if self.self_correction:
+            self.llm.log_context.record["stage"] = "self_correction"
             sql = self._self_correct(nl, schema_ddl, sql, hint)
 
         return sql
@@ -248,6 +255,9 @@ class DINSQLText2SQL(Text2SQLModel):
                 col_def = f"  {col.name} {col.dtype}"
                 if col.is_pk:
                     col_def += " PRIMARY KEY"
+                desc = self.column_descriptions.get((schema.db_id, table.name, col.name))
+                if desc:
+                    col_def += " /* " + desc.replace("*/", " ").replace("\n", " ") + " */"
                 col_defs.append(col_def)
 
             for src_col, tgt_table, tgt_col in fk_by_table.get(table.name, []):
@@ -301,10 +311,17 @@ class DINSQLText2SQL(Text2SQLModel):
             return match.group(1).strip()
 
         # Look for "SQL: SELECT ..." pattern (official CoT format)
-        # Find the LAST occurrence of "SQL:" to get the final query
-        matches = list(re.finditer(r'SQL:\s*(SELECT\b[^\n]*)', text, re.IGNORECASE))
-        if matches:
-            return matches[-1].group(1).strip()
+        # Take the LAST "SQL:" marker and keep the whole (possibly multi-line)
+        # statement after it, up to a blank line, ';' or end of text.
+        # The previous pattern `SQL:\s*(SELECT\b[^\n]*)` stopped at the first
+        # newline, so "SQL:\nSELECT a\nFROM t" became "SELECT a"
+        # (2026-10-16 audit, bug B2; official BIRD extraction keeps all lines).
+        segments = re.split(r'SQL:', text, flags=re.IGNORECASE)
+        for seg in reversed(segments[1:]):
+            m = re.match(r'\s*((?:WITH|SELECT)\b.*?)(?:;|\n\s*\n|\Z)', seg,
+                         re.IGNORECASE | re.DOTALL)
+            if m:
+                return m.group(1).strip()
 
         # Look for standalone SELECT statement
         match = re.search(r'(SELECT\b[^;]*)', text, re.DOTALL | re.IGNORECASE)

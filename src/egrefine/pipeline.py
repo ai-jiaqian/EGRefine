@@ -176,21 +176,21 @@ def run_pipeline(
     # ===== Phase 2: Candidate Generation (parallel) =====
     t0 = time.time()
     k = phase2_config.get("k", 3)
+    # E6 (workload-conditioned): feed 2-3 NL questions from Q(c_i) into the
+    # candidate prompt.  Uses ONLY the refinement workload — never holdout.
     workload_conditioned = phase2_config.get("workload_conditioned", False)
 
-    def _questions_for(column):
+    def _questions_for(col):
         if not workload_conditioned:
             return None
-        return [pair.nl for pair in query_index.get(column.full_name, [])[:3]] or None
+        return [p.nl for p in query_index.get(col.full_name, [])[:3]] or None
 
     phase2_results: Dict[str, List[CandidateName]] = {}
 
     if max_workers > 1 and len(prune_result.candidates) > 1:
         def _gen(col):
             return col.full_name, candidate_generator.generate(
-                col, schema, db_path, k=k,
-                sample_questions=_questions_for(col),
-            )
+                col, schema, db_path, k=k, sample_questions=_questions_for(col))
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = [pool.submit(_gen, col) for col in prune_result.candidates]
@@ -200,9 +200,7 @@ def run_pipeline(
     else:
         for col in prune_result.candidates:
             candidates = candidate_generator.generate(
-                col, schema, db_path, k=k,
-                sample_questions=_questions_for(col),
-            )
+                col, schema, db_path, k=k, sample_questions=_questions_for(col))
             phase2_results[col.full_name] = candidates
 
     timings["phase2"] = time.time() - t0

@@ -48,6 +48,7 @@ def _selection_results_from_pipeline_result(
     pipeline_result: dict,
     schema: Schema,
     tau: float,
+    conservative: bool = True,
 ) -> List[SelectionResult]:
     """Rebuild SelectionResult list by re-applying select_best at a new τ."""
     results = []
@@ -82,7 +83,7 @@ def _selection_results_from_pipeline_result(
             column=col,
             candidates=candidates,
             scores=all_scores,
-            conservative=True,
+            conservative=conservative,
             min_delta=tau,
         )
         results.append(sel)
@@ -115,6 +116,7 @@ def main():
                     help="New min_delta threshold (e.g. 0.03)")
     ap.add_argument("--output", required=True, help="Output refine dir")
     ap.add_argument("--conflict-rounds", type=int, default=2)
+    ap.add_argument("--no-conservative", action="store_true")
     args = ap.parse_args()
 
     with open(args.config) as f:
@@ -124,7 +126,7 @@ def main():
     dst = Path(args.output)
     if not src.exists():
         raise FileNotFoundError(src)
-    dst.mkdir(parents=True, exist_ok=True)
+    dst.mkdir(parents=True, exist_ok=False)
 
     logger.info("Loading %s schemas ...", args.benchmark)
     schemas = load_benchmark_schemas(args.benchmark, config)
@@ -155,7 +157,8 @@ def main():
             continue
 
         schema = schemas[db_id]
-        results = _selection_results_from_pipeline_result(pr, schema, args.tau)
+        results = _selection_results_from_pipeline_result(pr, schema, args.tau,
+                                                          conservative=not args.no_conservative)
 
         # Conflict resolution
         resolved = resolve_conflicts(

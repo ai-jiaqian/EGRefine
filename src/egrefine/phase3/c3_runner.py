@@ -18,6 +18,7 @@ from egrefine.models.llm_client import LLMClient
 from egrefine.phase2.sampler import sample_column
 from egrefine.phase3.executor import execute_sql
 from egrefine.phase3.text2sql_runner import Text2SQLModel, strip_thinking
+from egrefine.phase4.backmapper import backmap
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,9 @@ class C3Text2SQL(Text2SQLModel):
         column_mapping: Optional[dict] = None,
         evidence: str = "",
     ) -> str:
+        # RAW-log context so every call can be attributed to (db, question, stage).
+        self.llm.log_context.record = {"db_id": schema.db_id, "nl": nl,
+                                       "method": "c3", "stage": "schema_linking"}
         # Stage 1: Schema Linking
         linked_tables, linked_columns = self._schema_linking(nl, schema, evidence)
 
@@ -90,7 +94,7 @@ class C3Text2SQL(Text2SQLModel):
         )
 
         # Stage 3: Self-Consistency voting
-        return self._self_consistency(candidates, db_path)
+        return self._self_consistency(candidates, db_path, column_mapping)
 
     # ------------------------------------------------------------------ #
     # Stage 1: Schema Linking
@@ -214,6 +218,19 @@ class C3Text2SQL(Text2SQLModel):
         table_set = set(tables)
         col_set = set(columns)
 
+        # Join keys between two retained tables are always kept (both FK
+        # ends), as in the original C3 column recall which unions FK columns.
+        # Dropping them removed the FOREIGN KEY line and the join column from
+        # the generation prompt, so the model invented join predicates
+        # (2026-10-16 audit, bug B1).
+        fk_keep: Dict[str, set] = {}
+        for src, tgt in schema.foreign_keys:
+            s_tab, s_col = src.split(".", 1)
+            t_tab, t_col = tgt.split(".", 1)
+            if s_tab in table_set and t_tab in table_set:
+                fk_keep.setdefault(s_tab, set()).add(s_col)
+                fk_keep.setdefault(t_tab, set()).add(t_col)
+
         new_tables = []
         for table in schema.tables:
             if table.name not in table_set:
@@ -222,6 +239,7 @@ class C3Text2SQL(Text2SQLModel):
             table_cols = [c for c in columns if c.startswith(f"{table.name}.")]
             if table_cols:
                 col_names = {c.split(".", 1)[1] for c in table_cols}
+                col_names |= fk_keep.get(table.name, set())
                 filtered_cols = [c for c in table.columns if c.name in col_names]
                 # Always keep primary keys
                 for c in table.columns:
@@ -273,16 +291,14 @@ class C3Text2SQL(Text2SQLModel):
             "Return only the SQL query, no explanation."
         )
 
-        # Use custom temperature if provided (for self-consistency)
-        if temperature is not None:
-            original_temp = self.llm.temperature
-            self.llm.temperature = temperature
-            try:
-                response = self.llm.chat([{"role": "user", "content": prompt}])
-            finally:
-                self.llm.temperature = original_temp
-        else:
-            response = self.llm.chat([{"role": "user", "content": prompt}])
+        # Per-call temperature (self-consistency samples). Never mutate the
+        # shared client: run_eval/scorer share one model instance across worker
+        # threads, and mutating llm.temperature leaked 0.7 into concurrent
+        # schema-linking / T=0 calls (2026-10-16 audit, bug B3).
+        self.llm.log_context.record = dict(
+            getattr(self.llm.log_context, "record", {}) or {}, stage="generation")
+        kw = {} if temperature is None else {"temperature": temperature}
+        response = self.llm.chat([{"role": "user", "content": prompt}], **kw)
 
         return self._extract_sql(response)
 
@@ -432,15 +448,27 @@ class C3Text2SQL(Text2SQLModel):
 
         return candidates
 
-    def _self_consistency(self, candidates: List[str], db_path: str) -> str:
-        """Select the most consistent SQL via execution-result majority voting."""
+    def _self_consistency(
+        self, candidates: List[str], db_path: str,
+        column_mapping: Optional[dict] = None,
+    ) -> str:
+        """Select the most consistent SQL via execution-result majority voting.
+
+        ``column_mapping`` ({display_name: physical_name}) is set in Phase 3,
+        where the prompt shows a candidate name but ``db_path`` is the physical
+        original DB. Votes must execute the backmapped SQL; executing the
+        display-name SQL failed for every renamed candidate, so voting fell
+        back to the first sample (2026-10-13 fidelity audit, C10). The
+        returned SQL keeps display names; the scorer backmaps it afterwards.
+        """
         if len(candidates) == 1:
             return candidates[0]
 
         # Execute each candidate and group by result
         result_groups: Dict[Optional[tuple], List[str]] = {}
         for sql in candidates:
-            result = execute_sql(sql, db_path)
+            exec_sql = backmap(sql, column_mapping) if column_mapping else sql
+            result = execute_sql(exec_sql, db_path)
             # Convert set to sorted tuple for hashable grouping
             if result is not None:
                 key = tuple(sorted(result, key=lambda x: (x is None, str(x) if x is not None else "")))
